@@ -1,41 +1,67 @@
-import fitz  # PyMuPDF
 import os
+import queue
+from spire.doc import *
+from spire.doc.common import *
 
-def extract_pdf_structured(pdf_path, image_output_folder="pdf_images"):
-    os.makedirs(image_output_folder, exist_ok=True)
-    doc = fitz.open(pdf_path)
-    structured_output = []
+def extract_images(doc, image_dir):
+    os.makedirs(image_dir, exist_ok=True)
+    nodes = queue.Queue()
+    nodes.put(doc)
+    images = []
+    while nodes.qsize() > 0:
+        node = nodes.get()
+        for i in range(node.ChildObjects.Count):
+            child = node.ChildObjects.get_Item(i)
+            # Check if child is an image
+            if child.DocumentObjectType == DocumentObjectType.Picture:
+                picture = child if isinstance(child, DocPicture) else None
+                if picture:
+                    dataBytes = picture.ImageBytes
+                    img_filename = f"image_{len(images)+1}.png"
+                    img_path = os.path.join(image_dir, img_filename)
+                    with open(img_path, 'wb') as img_file:
+                        img_file.write(dataBytes)
+                    images.append(img_filename)
+            elif isinstance(child, ICompositeObject):
+                nodes.put(child)
+    return images
 
-    for page_num, page in enumerate(doc, start=1):
-        structured_output.append(f"\n--- Page {page_num} ---\n")
-        blocks = page.get_text("dict")["blocks"]
+def extract_text_and_tables(doc):
+    content_lines = []
+    for section in doc.Sections:
+        # Section Heading
+        content_lines.append(f"# Section")
+        # Paragraphs
+        for para in section.Paragraphs:
+            text = para.Text.strip()
+            if text:
+                content_lines.append(f"\n{para.StyleName if para.StyleName else 'Paragraph'}: {text}")
+        # Tables
+        for table_idx, table in enumerate(section.Tables):
+            content_lines.append(f"\n## Table {table_idx+1}")
+            for row in table.Rows:
+                row_cells = []
+                for cell in row.Cells:
+                    cell_text = " | ".join([p.Text.strip() for p in cell.Paragraphs if p.Text.strip()])
+                    row_cells.append(cell_text)
+                content_lines.append(" | ".join(row_cells))
+    return "\n".join(content_lines)
 
-        for block in blocks:
-            if block["type"] == 0:  # Text
-                for line in block["lines"]:
-                    spans = line["spans"]
-                    line_text = " ".join(span["text"].strip() for span in spans if span["text"].strip())
+def main(doc_path, image_dir, text_output_path):
+    doc = Document()
+    doc.LoadFromFile(doc_path)
+    # Extract images
+    images = extract_images(doc, image_dir)
+    print(f"Extracted {len(images)} images to {image_dir}")
+    # Extract text and tables
+    structured_text = extract_text_and_tables(doc)
+    with open(text_output_path, "w", encoding="utf-8") as f:
+        f.write(structured_text)
+    print(f"Structured text saved to {text_output_path}")
+    doc.Close()
 
-                    if not line_text:
-                        continue
-
-                    avg_font_size = sum(span["size"] for span in spans) / len(spans)
-
-                    if avg_font_size > 15:  # heuristic for headings
-                        structured_output.append(f"\n# {line_text}")
-                    elif avg_font_size > 12:  # subheadings
-                        structured_output.append(f"\n## {line_text}")
-                    else:
-                        structured_output.append(line_text)
-
-            elif block["type"] == 1:  # Image
-                try:
-                    img_index = block["number"]
-                    pix = page.get_image_pixmap(img_index, matrix=fitz.Matrix(2, 2))
-                    image_filename = os.path.join(image_output_folder, f"page{page_num}_img{img_index}.png")
-                    pix.save(image_filename)
-                    structured_output.append(f"\n![Image](./{image_output_folder}/page{page_num}_img{img_index}.png)")
-                except Exception as e:
-                    structured_output.append(f"\n[Image extraction failed on page {page_num}]")
-
-    return "\n".join(structured_output)
+# Usage
+doc_path = "your_file.doc"  # Path to your .doc file
+image_dir = "extracted_images"
+text_output_path = "structured_content.txt"
+main(doc_path, image_dir, text_output_path)
