@@ -15,12 +15,16 @@ def format_table_plain(headers, rows):
     lines.append("+" + "+".join("-" * (w + 2) for w in col_widths) + "+")
     return "\n".join(lines)
 
-def html_to_text_with_tables(html_content: str) -> str:
+def conf_html_to_text(html_content: str) -> str:
+    """
+    Converts Confluence REST API HTML content to a readable plain text string,
+    preserving tables in a visually aligned format.
+    """
     soup = BeautifulSoup(html_content, "html.parser")
     output = []
-    for elem in soup.body or soup:  # fallback if <body> missing
-        if elem.name == "table":
-            # Extract headers and rows
+    # Walk through all top-level elements in order
+    for elem in (soup.body or soup).children:
+        if getattr(elem, "name", None) == "table":
             rows = elem.find_all("tr")
             if not rows:
                 continue
@@ -29,10 +33,20 @@ def html_to_text_with_tables(html_content: str) -> str:
             for tr in rows[1:]:
                 data_rows.append([td.get_text(strip=True) for td in tr.find_all(["td", "th"])])
             output.append(format_table_plain(headers, data_rows))
-        elif elem.name in ["p", "h1", "h2", "h3", "h4", "h5", "h6"]:
+        elif getattr(elem, "name", None) in ["p", "h1", "h2", "h3", "h4", "h5", "h6"]:
             text = elem.get_text(strip=True)
             if text:
                 output.append(text)
+        elif getattr(elem, "name", None) == "ul":
+            for li in elem.find_all("li"):
+                text = li.get_text(strip=True)
+                if text:
+                    output.append(f"- {text}")
+        elif getattr(elem, "name", None) == "ol":
+            for i, li in enumerate(elem.find_all("li"), 1):
+                text = li.get_text(strip=True)
+                if text:
+                    output.append(f"{i}. {text}")
         # Add more tag handlers as needed
     return "\n\n".join(output)
-  
+    
